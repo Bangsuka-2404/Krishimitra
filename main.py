@@ -1,247 +1,56 @@
 import os
-
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-os.environ['PYTHONHASHSEED'] = '0'
-
-
+import sys
 import json
-import io
-import numpy as np
-import pandas as pd
 import joblib
-import httpx
-import uvicorn
-from PIL import Image
+import numpy as np
 
-#
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from groq import Groq
-
-
+# 1. FIX THE IMPORTS FOR LIGHTWEIGHT RUNTIME
 try:
     import tflite_runtime.interpreter as tflite
 except ImportError:
+    from tensorflow import lite as tflite
+
+# 2. DEBUG: PRINT EVERYTHING
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+print(f"--- RENDER DEBUG ---")
+print(f"Current Working Directory: {os.getcwd()}")
+print(f"Base Directory: {BASE_DIR}")
+print(f"Files in directory: {os.listdir(BASE_DIR)}")
+
+def load_file(name):
+    path = os.path.join(BASE_DIR, name)
+    if not os.path.exists(path):
+        print(f"❌ CRITICAL MISSING FILE: {name} at {path}")
+        return None
+    return path
+
+# 3. SECURE LOADING
+try:
+    # Check filenames - names MUST match your GitHub exactly (Case Sensitive)
+    tflite_path = load_file("model_optimized.tflite")
+    best_model_path = load_file("best_model.pkl")
+    scaler_path = load_file("scaler.pkl")
+    label_encoder_path = load_file("label_encoder.pkl")
+    labels_json_path = load_file("disease_labels.json")
+
+    if None in [tflite_path, best_model_path, scaler_path, label_encoder_path, labels_json_path]:
+        print("❌ App cannot start due to missing files.")
+        sys.exit(1)
+
+    # Initialize TFLite
+    interpreter = tflite.Interpreter(model_path=tflite_path)
+    interpreter.allocate_tensors()
     
-    import tensorflow.lite as tflite
-
-import tflite_runtime.interpreter as tflite
-interpreter = tflite.Interpreter(model_path="model_optimized.tflite")
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-# Tabular Models
-model = joblib.load("best_model.pkl") 
-scaler = joblib.load("scaler.pkl")
-label_encoder = joblib.load("label_encoder.pkl")
-
-# --- UPDATED: TFLITE LOAD LOGIC ---
-# Using the Interpreter instead of load_model for memory efficiency and compatibility
-interpreter = tf.lite.Interpreter(model_path="model_optimized.tflite")
-interpreter.allocate_tensors()
-
-# Get input and output details for the prediction function
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-with open("disease_labels.json", "r") as f:
-    disease_labels = json.load(f)
-
-app = FastAPI()
-
-# Enable CORS for HTML and ESP32 communication
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-GROQ_API_KEY = "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" 
-WEATHER_API_KEY = "435f7efc54f0eee90dc7bfd7b3290fcf"
-
-client = Groq(api_key=GROQ_API_KEY)
-
-class FarmerProfile(BaseModel):
-    name: str = "Farmer"
-    age: str = "Unknown"
-    location: str = "India"
-    soil: str = "General"
-    crop: str = "Crops"
-    size: str = "Unknown"
-    irrigation: str = "General"
-
-class SensorData(BaseModel):
-    temperature: float
-    humidity: float
-
-class PredictionInput(BaseModel):
-    n: float
-    p: float
-    k: float
-    ph: float
-
-class ChatRequest(BaseModel):
-    message: str
-    language: str = "English"
-
-
-current_farmer_data = FarmerProfile()
-latest_sensors = SensorData(temperature=0.0, humidity=0.0)
-
-
-@app.post("/update-sensors")
-async def update_sensors(data: SensorData):
-    global latest_sensors
-    latest_sensors = data
-    print(f"📡 Hardware Update -> Temp: {data.temperature}°C, Hum: {data.humidity}%")
-    return {"status": "success"}
-
-
-@app.post("/save-profile")
-async def save_profile(profile: FarmerProfile):
-    global current_farmer_data
-    current_farmer_data = profile
-    print(f"✅ Profile saved: {profile.name}")
-    return {"status": "success"}
-
-
-@app.post("/predict-disease")
-async def predict_disease(file: UploadFile = File(...)):
-    try:
-      
-        contents = await file.read()
-        img = Image.open(io.BytesIO(contents)).convert('RGB')
-        
-        
-        img = img.resize((224, 224))
-        
-        img_array = np.array(img, dtype=np.float32) / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
-
-   
-        interpreter.set_tensor(input_details[0]['index'], img_array)
-        interpreter.invoke()
-        
-      
-        prediction = interpreter.get_tensor(output_details[0]['index'])
-        class_idx = np.argmax(prediction)
-        confidence = np.max(prediction)
-        
-      
-        disease_name = disease_labels[str(class_idx)]
-
-      
-        treatment_prompt = f"""
-        The crop disease identified is '{disease_name}'. 
-        Provide a concise, 3-step organic treatment guide for an Indian small-scale farmer. 
-        Keep it practical and easy to follow.
-        """
-        
-        ai_res = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": treatment_prompt}]
-        )
-
-        return {
-            "disease": disease_name,
-            "confidence": f"{confidence*100:.2f}%",
-            "treatment": ai_res.choices[0].message.content
-        }
-    except Exception as e:
-        print(f"Disease Prediction Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/predict-crop")
-async def predict_crop(manual: PredictionInput):
-    try:
-        current_temp = latest_sensors.temperature if latest_sensors.temperature != 0 else 25.0
-        current_hum = latest_sensors.humidity if latest_sensors.humidity != 0 else 50.0
-
-        features = np.array([[
-            manual.n, manual.p, manual.k, current_temp, current_hum, manual.ph, 100.0 
-        ]])
-
-        scaled_features = scaler.transform(features)
-        prediction_id = model.predict(scaled_features)[0]
-        crop_name = label_encoder.inverse_transform([prediction_id])[0]
-
-        advisory_prompt = f"""
-Act as a Senior Agricultural Consultant. Provide a cultivation guide for {crop_name.upper()}.
-YOU MUST format your response as a simple list where each line contains exactly one '|' character.
-DO NOT use markdown table syntax.
-Example Format:
-Time to Harvest | 90-120 days
-Organic Manures | 2-3 tons of Vermicompost per acre
-Water Management | Drip irrigation recommended
-Disease Control | Use Neem cake or organic pesticides
-"""
-
-        explanation = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "You are a precise agricultural assistant. Output only lines separated by | for data table parsing."},
-                {"role": "user", "content": advisory_prompt}
-            ],
-            temperature=0.2
-        )
-
-        return {
-            "recommendation": crop_name.upper(),
-            "reasoning": explanation.choices[0].message.content,
-            "sensors_used": {"temp": current_temp, "hum": current_hum}
-        }
-
-    except Exception as e:
-        print(f"ML Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/ask")
-async def ask_bot(request: ChatRequest):
-    try:
-        weather_url = f"https://api.openweathermap.org/data/2.5/weather?q={current_farmer_data.location}&appid={WEATHER_API_KEY}&units=metric"
-        weather_info = "Weather unavailable."
-        alert = "" 
-        
-        async with httpx.AsyncClient() as client_http:
-            w_res = await client_http.get(weather_url)
-            if w_res.status_code == 200:
-                wd = w_res.json()
-                temp = wd['main']['temp']
-                desc = wd['weather'][0]['description'].lower()
-                weather_info = f"{temp}°C, {desc}"
-                
-                if "rain" in desc or "storm" in desc:
-                    alert = "⚠️ Heavy rain expected. Postpone your irrigation to save water."
-
-        context = (
-            f"Farmer: {current_farmer_data.name}, Crop: {current_farmer_data.crop}, "
-            f"Soil: {current_farmer_data.soil}, Location: {current_farmer_data.location}, "
-            f"Live Weather: {weather_info}, Sensor Temp: {latest_sensors.temperature}°C"
-        )
-
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": f"You are KrishiMitra AI. Context: {context}. Respond in {request.language}."},
-                {"role": "user", "content": request.message}
-            ]
-        )
-        
-        return {
-            "response": completion.choices[0].message.content,
-            "alert": alert
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Load Pickles
+    model = joblib.load(best_model_path)
+    scaler = joblib.load(scaler_path)
+    label_encoder = joblib.load(label_encoder_path)
     
+    with open(labels_json_path, "r") as f:
+        disease_labels = json.load(f)
 
-if __name__ == "__main__":
-  
+    print("✅ ALL MODELS LOADED SUCCESSFULLY")
+
+except Exception as e:
+    print(f"❌ STARTUP ERROR: {str(e)}")
+    sys.exit(1)
