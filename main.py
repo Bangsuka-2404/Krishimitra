@@ -1,39 +1,35 @@
 import os
+import os
+# --- RENDER MEMORY OPTIMIZATION ---
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # Block all training logs
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' # Disable heavy oneDNN custom ops
+os.environ['MKL_NUM_THREADS'] = '1' # Limit math library threads
+os.environ['OMP_NUM_THREADS'] = '1'
 
+import tensorflow as tf
+# Force TensorFlow to use only 1 thread to save RAM
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
+# ----------------------------------
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
-os.environ['PYTHONHASHSEED'] = '0'
-
-
-import json
-import io
-import numpy as np
-import pandas as pd
-import joblib
+# ... rest of your imports (FastAPI, joblib, etc.)
 import httpx
-import uvicorn
-from PIL import Image
-
-#
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
+import uvicorn
+import joblib
+import pandas as pd
+import numpy as np
+import json
+import io
 
+# ML/DL Libraries
+from tensorflow.keras.preprocessing import image
+from PIL import Image
 
-try:
-    import tflite_runtime.interpreter as tflite
-except ImportError:
-    
-    import tensorflow.lite as tflite
-
-import tflite_runtime.interpreter as tflite
-interpreter = tflite.Interpreter(model_path="model_optimized.tflite")
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-# Tabular Models
+# Load the Tabular models for Crop Recommendation
 model = joblib.load("best_model.pkl") 
 scaler = joblib.load("scaler.pkl")
 label_encoder = joblib.load("label_encoder.pkl")
@@ -245,4 +241,5 @@ async def ask_bot(request: ChatRequest):
     
 
 if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8001)
    
