@@ -61,13 +61,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- CONFIGURATION ---
+
 GROQ_API_KEY = "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" 
 WEATHER_API_KEY = "435f7efc54f0eee90dc7bfd7b3290fcf"
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# --- MODELS ---
 class FarmerProfile(BaseModel):
     name: str = "Farmer"
     age: str = "Unknown"
@@ -91,11 +90,11 @@ class ChatRequest(BaseModel):
     message: str
     language: str = "English"
 
-# --- GLOBAL STORAGE ---
+
 current_farmer_data = FarmerProfile()
 latest_sensors = SensorData(temperature=0.0, humidity=0.0)
 
-# 1. ESP32 ENDPOINT: Receives DHT22 data from hardware
+
 @app.post("/update-sensors")
 async def update_sensors(data: SensorData):
     global latest_sensors
@@ -103,7 +102,7 @@ async def update_sensors(data: SensorData):
     print(f"📡 Hardware Update -> Temp: {data.temperature}°C, Hum: {data.humidity}%")
     return {"status": "success"}
 
-# 2. PROFILE ENDPOINT: Saves farmer info
+
 @app.post("/save-profile")
 async def save_profile(profile: FarmerProfile):
     global current_farmer_data
@@ -111,33 +110,33 @@ async def save_profile(profile: FarmerProfile):
     print(f"✅ Profile saved: {profile.name}")
     return {"status": "success"}
 
-# --- 3. UPDATED: DISEASE PREDICTION ENDPOINT (TFLITE VERSION) ---
+
 @app.post("/predict-disease")
 async def predict_disease(file: UploadFile = File(...)):
     try:
-        # 1. Read the uploaded file into an image
+      
         contents = await file.read()
         img = Image.open(io.BytesIO(contents)).convert('RGB')
         
-        # 2. Preprocess the image for the TFLite (224x224)
+        
         img = img.resize((224, 224))
-        # Important: TFLite expects float32
+        
         img_array = np.array(img, dtype=np.float32) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
 
-        # 3. Perform TFLite Inference
+   
         interpreter.set_tensor(input_details[0]['index'], img_array)
         interpreter.invoke()
         
-        # 4. Get the prediction results
+      
         prediction = interpreter.get_tensor(output_details[0]['index'])
         class_idx = np.argmax(prediction)
         confidence = np.max(prediction)
         
-        # Map index to disease name using the JSON file
+      
         disease_name = disease_labels[str(class_idx)]
 
-        # 5. Use LLAMA AI to generate a quick organic treatment advisory
+      
         treatment_prompt = f"""
         The crop disease identified is '{disease_name}'. 
         Provide a concise, 3-step organic treatment guide for an Indian small-scale farmer. 
@@ -158,7 +157,7 @@ async def predict_disease(file: UploadFile = File(...)):
         print(f"Disease Prediction Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 4. PREDICTION ENDPOINT: Crop Recommendation
+
 @app.post("/predict-crop")
 async def predict_crop(manual: PredictionInput):
     try:
@@ -203,7 +202,7 @@ Disease Control | Use Neem cake or organic pesticides
         print(f"ML Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 5. CHAT ENDPOINT: General Assistant
+
 @app.post("/ask")
 async def ask_bot(request: ChatRequest):
     try:
