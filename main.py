@@ -1,22 +1,39 @@
 import os
+
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['PYTHONHASHSEED'] = '0'
+
+
+import json
+import io
+import numpy as np
+import pandas as pd
+import joblib
 import httpx
+import uvicorn
+from PIL import Image
+
+#
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
-import uvicorn
-import joblib
-import pandas as pd
-import numpy as np
-import json
-import io
-import tensorflow as tf
 
-# ML/DL Libraries
-from tensorflow.keras.preprocessing import image
-from PIL import Image
 
-# Load the Tabular models for Crop Recommendation
+try:
+    import tflite_runtime.interpreter as tflite
+except ImportError:
+    
+    import tensorflow.lite as tflite
+
+import tflite_runtime.interpreter as tflite
+interpreter = tflite.Interpreter(model_path="model_lite.tflite")
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Tabular Models
 model = joblib.load("best_model.pkl") 
 scaler = joblib.load("scaler.pkl")
 label_encoder = joblib.load("label_encoder.pkl")
